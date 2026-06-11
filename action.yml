@@ -1,0 +1,139 @@
+name: 'Install C3 Compiler'
+description: 'Install c3c compiler and add it to the PATH'
+inputs:
+  os:
+    description: 'The operating system target. If omitted, will be auto-detected.'
+    required: false
+  arch:
+    description: 'The CPU architecture. If omitted, will be auto-detected.'
+    required: false
+  version:
+    description: 'The compiler version to install (e.g. latest, nightly, or 0.8.1)'
+    required: false
+    default: 'latest'
+  build-type:
+    description: 'The build type: "release" or "debug"'
+    required: false
+    default: 'release'
+outputs:
+  c3c-path:
+    description: 'The directory containing the c3c compiler executable'
+    value: ${{ steps.install.outputs.c3c-path }}
+  c3c:
+    description: 'The path to the c3c compiler executable'
+    value: ${{ steps.install.outputs.c3c }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Download and install c3c
+      id: install
+      shell: bash
+      run: |
+        OS_INPUT="${{ inputs.os }}"
+        ARCH_INPUT="${{ inputs.arch }}"
+        VERSION="${{ inputs.version }}"
+
+        # Auto-detect OS if not provided
+        if [ -z "$OS_INPUT" ]; then
+          UNAME_S=$(uname -s | tr '[:upper:]' '[:lower:]')
+          if [[ "$UNAME_S" =~ darwin ]]; then
+            OS_INPUT="macos"
+          elif [[ "$UNAME_S" =~ mingw|msys|cygwin ]]; then
+            OS_INPUT="windows"
+          else
+            OS_INPUT="linux"
+          fi
+        fi
+
+        # Auto-detect Arch if not provided
+        if [ -z "$ARCH_INPUT" ]; then
+          UNAME_M=$(uname -m | tr '[:upper:]' '[:lower:]')
+          if [[ "$UNAME_M" =~ arm64|aarch64 ]]; then
+            ARCH_INPUT="aarch64"
+          else
+            ARCH_INPUT="x86_64"
+          fi
+        fi
+
+        OS=$(echo "$OS_INPUT" | tr '[:upper:]' '[:lower:]')
+        ARCH=$(echo "$ARCH_INPUT" | tr '[:upper:]' '[:lower:]')
+        
+        # Normalize OS & Arch to match release asset names
+        EXT="tar.gz"
+        if [[ "$OS" =~ linux ]]; then
+          ASSET="linux-static"
+        elif [[ "$OS" =~ macos|darwin ]]; then
+          ASSET="macos"
+          EXT="zip"
+        elif [[ "$OS" =~ windows|win ]]; then
+          ASSET="windows"
+          EXT="zip"
+        elif [[ "$OS" =~ android ]]; then
+          EXT="tar.gz"
+          if [[ "$ARCH" =~ arm64|aarch64 ]]; then
+            ASSET="android-aarch64"
+          else
+            ASSET="android-x86_64"
+          fi
+        else
+          ASSET="$OS" # fallback for netbsd, openbsd, etc.
+        fi
+
+        # Determine if debug build suffix is needed
+        SUFFIX=""
+        if [ "${{ inputs.build-type }}" = "debug" ]; then
+          SUFFIX="-debug"
+        fi
+
+        # Resolve version and construct download URL
+        if [ "$VERSION" = "latest" ]; then
+          DOWNLOAD_URL="https://github.com/c3lang/c3c/releases/latest/download/c3-${ASSET}${SUFFIX}.${EXT}"
+        else
+          if [ "$VERSION" = "nightly" ]; then
+            VERSION="latest-prerelease-tag"
+          elif [[ "$VERSION" =~ ^[0-9] ]]; then
+            VERSION="v$VERSION"
+          fi
+
+          # Validate version is >= 0.8.0
+          if [[ "$VERSION" =~ ^v([0-9]+)\.([0-9]+) ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            if [ "$MAJOR" -eq 0 ] && [ "$MINOR" -lt 8 ]; then
+              echo "::error::C3 compiler version $VERSION is not supported (minimum version required is 0.8.0)."
+              exit 1
+            fi
+          fi
+
+          DOWNLOAD_URL="https://github.com/c3lang/c3c/releases/download/${VERSION}/c3-${ASSET}${SUFFIX}.${EXT}"
+        fi
+        echo "Downloading c3c from $DOWNLOAD_URL ..."
+        
+        INSTALL_DIR="${{ github.action_path }}/_c3"
+        mkdir -p "$INSTALL_DIR"
+        
+        curl -L -s -o "archive.${EXT}" "$DOWNLOAD_URL" || { echo "::error::Failed to download from $DOWNLOAD_URL"; exit 1; }
+        if [ "$EXT" = "zip" ]; then
+          unzip -q -o "archive.${EXT}" -d "$INSTALL_DIR"
+        else
+          tar -xzf "archive.${EXT}" -C "$INSTALL_DIR"
+        fi
+        rm "archive.${EXT}"
+
+        C3_DIR="$INSTALL_DIR/c3"
+        if [ -f "$C3_DIR/c3c.exe" ]; then
+          C3C_EXE="$C3_DIR/c3c.exe"
+        else
+          C3C_EXE="$C3_DIR/c3c"
+          chmod +x "$C3C_EXE"
+        fi
+
+        # Export outputs and add to path
+        echo "$C3_DIR" >> $GITHUB_PATH
+        echo "c3c-path=$C3_DIR" >> $GITHUB_OUTPUT
+        echo "c3c=$C3C_EXE" >> $GITHUB_OUTPUT
+
+
+branding:
+  icon: package
+  color: purple

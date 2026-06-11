@@ -1,0 +1,43 @@
+name: Test Action
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}-${{ matrix.version }}-${{ matrix.build-type }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
+        version: [latest, nightly]
+        build-type: [release, debug]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup C3 Compiler
+        id: setup-c3
+        uses: ./
+        with:
+          version: ${{ matrix.version }}
+          build-type: ${{ matrix.build-type }}
+
+      - name: Verify c3c Installation
+        shell: bash
+        run: |
+          echo "c3c path output: ${{ steps.setup-c3.outputs.c3c-path }}"
+          echo "c3c executable output: ${{ steps.setup-c3.outputs.c3c }}"
+          c3c --version
+          
+          # Write summary to Github Actions Web console
+          echo "### C3 Installation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Compiler Directory:** \`${{ steps.setup-c3.outputs.c3c-path }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Executable Path:** \`${{ steps.setup-c3.outputs.c3c }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** \`$(c3c --version | head -n 1)\`" >> $GITHUB_STEP_SUMMARY

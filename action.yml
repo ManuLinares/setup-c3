@@ -66,7 +66,11 @@ runs:
           ASSET="macos"
           EXT="zip"
         elif [[ "$OS" =~ windows|win ]]; then
-          ASSET="windows"
+          if [[ "$ARCH" =~ arm64|aarch64 ]]; then
+            ASSET="windows-aarch64"
+          else
+            ASSET="windows"
+          fi
           EXT="zip"
         elif [[ "$OS" =~ android ]]; then
           EXT="tar.gz"

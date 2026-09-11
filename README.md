@@ -33,7 +33,7 @@ jobs:
     name: Build project
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ManuLinares/setup-c3@v1
       - run: c3c compile myproject
 ```
@@ -42,7 +42,7 @@ jobs:
 
 ```yaml
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ManuLinares/setup-c3@v1
         with:
           version: nightly

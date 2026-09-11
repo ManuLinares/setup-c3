@@ -95,6 +95,7 @@ runs:
         else
           if [ "$VERSION" = "nightly" ]; then
             VERSION="latest-prerelease-tag"
+            NIGHTLY=true
           elif [[ "$VERSION" =~ ^[0-9] ]]; then
             VERSION="v$VERSION"
           fi
@@ -110,6 +111,23 @@ runs:
           fi
 
           DOWNLOAD_URL="https://github.com/c3lang/c3c/releases/download/${VERSION}/c3-${ASSET}${SUFFIX}.${EXT}"
+
+          # Nightly fallback: if the static tag URL has no assets yet (mid-release),
+          # resolve the real latest prerelease via the GitHub API.
+          if [ "${NIGHTLY:-false}" = "true" ]; then
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L "$DOWNLOAD_URL")
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "Tag 'latest-prerelease-tag' has no assets (HTTP $HTTP_STATUS), falling back to GitHub API..."
+              ASSET_NAME="c3-${ASSET}${SUFFIX}.${EXT}"
+              DOWNLOAD_URL=$(curl -s https://api.github.com/repos/c3lang/c3c/releases \
+                | grep -o '"browser_download_url": *"[^"]*'"$ASSET_NAME"'"' \
+                | head -1 | grep -o 'https://[^"]*')
+              if [ -z "$DOWNLOAD_URL" ]; then
+                echo "::error::Could not resolve a nightly download URL via GitHub API."
+                exit 1
+              fi
+            fi
+          fi
         fi
         echo "Downloading c3c from $DOWNLOAD_URL ..."
         

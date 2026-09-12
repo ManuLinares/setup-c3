@@ -130,8 +130,8 @@ runs:
                 echo "::warning::GitHub API returned an error: $(echo "$API_RESPONSE" | grep -o '"message":"[^"]*"')"
               fi
               DOWNLOAD_URL=$(echo "$API_RESPONSE" \
-                | grep -o '"browser_download_url":"[^"]*'"$ASSET_NAME"'"' \
-                | head -1 | grep -o 'https://[^"]*')
+                | grep -o '"browser_download_url": *"[^"]*'"$ASSET_NAME"'"' \
+                | head -1 | grep -o 'https://[^"]*' || true)
               if [ -z "$DOWNLOAD_URL" ]; then
                 echo "::error::Could not resolve a nightly download URL for asset '$ASSET_NAME' via GitHub API."
                 exit 1

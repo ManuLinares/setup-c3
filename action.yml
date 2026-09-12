@@ -15,6 +15,10 @@ inputs:
     description: 'The build type: "release" or "debug"'
     required: false
     default: 'release'
+  github-token:
+    description: 'GitHub token for querying GitHub API during nightly resolution'
+    required: false
+    default: ${{ github.token }}
 outputs:
   c3c-path:
     description: 'The directory containing the c3c compiler executable'
@@ -28,6 +32,8 @@ runs:
     - name: Download and install c3c
       id: install
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         OS_INPUT="${{ inputs.os }}"
         ARCH_INPUT="${{ inputs.arch }}"

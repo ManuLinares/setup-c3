@@ -119,15 +119,21 @@ runs:
             if [ "$HTTP_STATUS" != "200" ]; then
               echo "Tag 'latest-prerelease-tag' has no assets (HTTP $HTTP_STATUS), falling back to GitHub API..."
               ASSET_NAME="c3-${ASSET}${SUFFIX}.${EXT}"
-              CURL_AUTH=()
+              # Use the dedicated latest prerelease endpoint instead of scraping the full list
+              CURL_ARGS=(-s -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
               if [ -n "${GITHUB_TOKEN:-}" ]; then
-                CURL_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+                CURL_ARGS+=(-H "Authorization: Bearer $GITHUB_TOKEN")
               fi
-              DOWNLOAD_URL=$(curl -s "${CURL_AUTH[@]}" https://api.github.com/repos/c3lang/c3c/releases \
-                | grep -o '"browser_download_url": *"[^"]*'"$ASSET_NAME"'"' \
+              API_RESPONSE=$(curl "${CURL_ARGS[@]}" "https://api.github.com/repos/c3lang/c3c/releases?per_page=10")
+              # Check for rate limit or error
+              if echo "$API_RESPONSE" | grep -q '"message"'; then
+                echo "::warning::GitHub API returned an error: $(echo "$API_RESPONSE" | grep -o '"message":"[^"]*"')"
+              fi
+              DOWNLOAD_URL=$(echo "$API_RESPONSE" \
+                | grep -o '"browser_download_url":"[^"]*'"$ASSET_NAME"'"' \
                 | head -1 | grep -o 'https://[^"]*')
               if [ -z "$DOWNLOAD_URL" ]; then
-                echo "::error::Could not resolve a nightly download URL via GitHub API."
+                echo "::error::Could not resolve a nightly download URL for asset '$ASSET_NAME' via GitHub API."
                 exit 1
               fi
             fi

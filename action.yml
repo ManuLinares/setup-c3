@@ -119,7 +119,11 @@ runs:
             if [ "$HTTP_STATUS" != "200" ]; then
               echo "Tag 'latest-prerelease-tag' has no assets (HTTP $HTTP_STATUS), falling back to GitHub API..."
               ASSET_NAME="c3-${ASSET}${SUFFIX}.${EXT}"
-              DOWNLOAD_URL=$(curl -s https://api.github.com/repos/c3lang/c3c/releases \
+              CURL_AUTH=()
+              if [ -n "${GITHUB_TOKEN:-}" ]; then
+                CURL_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+              fi
+              DOWNLOAD_URL=$(curl -s "${CURL_AUTH[@]}" https://api.github.com/repos/c3lang/c3c/releases \
                 | grep -o '"browser_download_url": *"[^"]*'"$ASSET_NAME"'"' \
                 | head -1 | grep -o 'https://[^"]*')
               if [ -z "$DOWNLOAD_URL" ]; then

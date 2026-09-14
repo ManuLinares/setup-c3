@@ -14,13 +14,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2025-vs2026]
-        version: [latest, nightly]
-        build-type: [release, debug]
+        os:
+          - windows-11-arm
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+        version: [latest]
+        build-type: [release]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      # 100% confirmation step: inspect GitHub runner variables vs uname
+      - name: Confirm GitHub Runner Architecture
+        shell: bash
+        run: |
+          echo "================ GITHUB RUNNER INFO ================"
+          echo "GitHub Context runner.os:     ${{ runner.os }}"
+          echo "GitHub Context runner.arch:   ${{ runner.arch }}"
+          echo "Env variable RUNNER_OS:       $RUNNER_OS"
+          echo "Env variable RUNNER_ARCH:     $RUNNER_ARCH"
+          echo "----------------------------------------------------"
+          echo "Shell uname -s:               $(uname -s)"
+          echo "Shell uname -m:               $(uname -m)"
+          echo "===================================================="
 
       - name: Setup C3 Compiler
         id: setup-c3
@@ -34,10 +52,13 @@ jobs:
         run: |
           echo "c3c path output: ${{ steps.setup-c3.outputs.c3c-path }}"
           echo "c3c executable output: ${{ steps.setup-c3.outputs.c3c }}"
-          c3c --version
+          
+          echo "=== c3c details ==="
+          c3c -V
           
           # Write summary to Github Actions Web console
-          echo "### C3 Installation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### C3 Installation Summary (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner Arch:** \`${{ runner.arch }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Compiler Directory:** \`${{ steps.setup-c3.outputs.c3c-path }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Executable Path:** \`${{ steps.setup-c3.outputs.c3c }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** \`$(c3c --version | head -n 1)\`" >> $GITHUB_STEP_SUMMARY

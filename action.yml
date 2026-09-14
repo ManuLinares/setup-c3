@@ -8,7 +8,7 @@ inputs:
     description: 'The CPU architecture. If omitted, will be auto-detected.'
     required: false
   version:
-    description: 'The compiler version to install (e.g. latest, nightly, or 0.8.1)'
+    description: 'The compiler version to install (e.g. latest, nightly, or 0.8.4)'
     required: false
     default: 'latest'
   build-type:
@@ -35,36 +35,30 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
+        set -euo pipefail
+
         OS_INPUT="${{ inputs.os }}"
         ARCH_INPUT="${{ inputs.arch }}"
         VERSION="${{ inputs.version }}"
 
-        # Auto-detect OS if not provided
-        if [ -z "$OS_INPUT" ]; then
-          UNAME_S=$(uname -s | tr '[:upper:]' '[:lower:]')
-          if [[ "$UNAME_S" =~ darwin ]]; then
-            OS_INPUT="macos"
-          elif [[ "$UNAME_S" =~ mingw|msys|cygwin ]]; then
-            OS_INPUT="windows"
-          else
-            OS_INPUT="linux"
-          fi
+        # 1. Resolve OS: inputs -> RUNNER_OS -> uname -s fallback
+        OS="${OS_INPUT:-${RUNNER_OS:-}}"
+        if [ -z "$OS" ]; then
+          case "$(uname -s)" in
+            Darwin*) OS="macos" ;;
+            MINGW*|MSYS*|CYGWIN*) OS="windows" ;;
+            *) OS="linux" ;;
+          esac
         fi
 
-        # Auto-detect Arch if not provided
-        if [ -z "$ARCH_INPUT" ]; then
-          UNAME_M=$(uname -m | tr '[:upper:]' '[:lower:]')
-          if [[ "$UNAME_M" =~ arm64|aarch64 ]]; then
-            ARCH_INPUT="aarch64"
-          else
-            ARCH_INPUT="x86_64"
-          fi
-        fi
+        # 2. Resolve Arch: inputs -> RUNNER_ARCH -> uname -m fallback
+        ARCH="${ARCH_INPUT:-${RUNNER_ARCH:-$(uname -m)}}"
 
-        OS=$(echo "$OS_INPUT" | tr '[:upper:]' '[:lower:]')
-        ARCH=$(echo "$ARCH_INPUT" | tr '[:upper:]' '[:lower:]')
-        
-        # Normalize OS & Arch to match release asset names
+        # Normalize to lowercase
+        OS=$(echo "$OS" | tr '[:upper:]' '[:lower:]')
+        ARCH=$(echo "$ARCH" | tr '[:upper:]' '[:lower:]')
+
+        # 3. Match release asset naming conventions
         EXT="tar.gz"
         if [[ "$OS" =~ linux ]]; then
           ASSET="linux-static"
@@ -79,26 +73,25 @@ runs:
           fi
           EXT="zip"
         elif [[ "$OS" =~ android ]]; then
-          EXT="tar.gz"
           if [[ "$ARCH" =~ arm64|aarch64 ]]; then
             ASSET="android-aarch64"
           else
             ASSET="android-x86_64"
           fi
         else
-          ASSET="$OS" # fallback for netbsd, openbsd, etc.
+          ASSET="$OS"
         fi
 
-        # Determine if debug build suffix is needed
         SUFFIX=""
         if [ "${{ inputs.build-type }}" = "debug" ]; then
           SUFFIX="-debug"
         fi
 
-        # Resolve version and construct download URL
+        # 4. Resolve download URL
         if [ "$VERSION" = "latest" ]; then
           DOWNLOAD_URL="https://github.com/c3lang/c3c/releases/latest/download/c3-${ASSET}${SUFFIX}.${EXT}"
         else
+          NIGHTLY=false
           if [ "$VERSION" = "nightly" ]; then
             VERSION="latest-prerelease-tag"
             NIGHTLY=true
@@ -118,26 +111,22 @@ runs:
 
           DOWNLOAD_URL="https://github.com/c3lang/c3c/releases/download/${VERSION}/c3-${ASSET}${SUFFIX}.${EXT}"
 
-          # Nightly fallback: if the static tag URL has no assets yet (mid-release),
-          # resolve the real latest prerelease via the GitHub API.
-          if [ "${NIGHTLY:-false}" = "true" ]; then
+          # Nightly fallback: if the static tag URL has no assets yet, query the GitHub API
+          if [ "$NIGHTLY" = "true" ]; then
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L "$DOWNLOAD_URL")
             if [ "$HTTP_STATUS" != "200" ]; then
-              echo "Tag 'latest-prerelease-tag' has no assets (HTTP $HTTP_STATUS), falling back to GitHub API..."
+              echo "Tag 'latest-prerelease-tag' returned HTTP $HTTP_STATUS, falling back to GitHub API..."
               ASSET_NAME="c3-${ASSET}${SUFFIX}.${EXT}"
-              # Use the dedicated latest prerelease endpoint instead of scraping the full list
-              CURL_ARGS=(-s -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+              CURL_ARGS=(-fsSL -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
               if [ -n "${GITHUB_TOKEN:-}" ]; then
                 CURL_ARGS+=(-H "Authorization: Bearer $GITHUB_TOKEN")
               fi
+
               API_RESPONSE=$(curl "${CURL_ARGS[@]}" "https://api.github.com/repos/c3lang/c3c/releases?per_page=10")
-              # Check for rate limit or error
-              if echo "$API_RESPONSE" | grep -q '"message"'; then
-                echo "::warning::GitHub API returned an error: $(echo "$API_RESPONSE" | grep -o '"message":"[^"]*"')"
-              fi
               DOWNLOAD_URL=$(echo "$API_RESPONSE" \
                 | grep -o '"browser_download_url": *"[^"]*'"$ASSET_NAME"'"' \
                 | head -1 | grep -o 'https://[^"]*' || true)
+
               if [ -z "$DOWNLOAD_URL" ]; then
                 echo "::error::Could not resolve a nightly download URL for asset '$ASSET_NAME' via GitHub API."
                 exit 1
@@ -145,18 +134,26 @@ runs:
             fi
           fi
         fi
+
         echo "Downloading c3c from $DOWNLOAD_URL ..."
-        
-        INSTALL_DIR="${{ github.action_path }}/_c3"
+
+        INSTALL_DIR="${RUNNER_TEMP:-${{ github.action_path }}}/_c3"
+        ARCHIVE_FILE="$INSTALL_DIR/archive.${EXT}"
         mkdir -p "$INSTALL_DIR"
-        
-        curl -L -s -o "archive.${EXT}" "$DOWNLOAD_URL" || { echo "::error::Failed to download from $DOWNLOAD_URL"; exit 1; }
+
+        # Download with -f to fail on 404/500
+        curl -fsSL -o "$ARCHIVE_FILE" "$DOWNLOAD_URL" || {
+          echo "::error::Failed to download from $DOWNLOAD_URL"
+          exit 1
+        }
+
+        # Extract archive
         if [ "$EXT" = "zip" ]; then
-          unzip -q -o "archive.${EXT}" -d "$INSTALL_DIR"
+          unzip -q -o "$ARCHIVE_FILE" -d "$INSTALL_DIR"
         else
-          tar -xzf "archive.${EXT}" -C "$INSTALL_DIR"
+          tar -xzf "$ARCHIVE_FILE" -C "$INSTALL_DIR"
         fi
-        rm "archive.${EXT}"
+        rm -f "$ARCHIVE_FILE"
 
         C3_DIR="$INSTALL_DIR/c3"
         if [ -f "$C3_DIR/c3c.exe" ]; then
@@ -166,11 +163,10 @@ runs:
           chmod +x "$C3C_EXE"
         fi
 
-        # Export outputs and add to path
-        echo "$C3_DIR" >> $GITHUB_PATH
-        echo "c3c-path=$C3_DIR" >> $GITHUB_OUTPUT
-        echo "c3c=$C3C_EXE" >> $GITHUB_OUTPUT
-
+        # Export outputs and add to PATH
+        echo "$C3_DIR" >> "$GITHUB_PATH"
+        echo "c3c-path=$C3_DIR" >> "$GITHUB_OUTPUT"
+        echo "c3c=$C3C_EXE" >> "$GITHUB_OUTPUT"
 
 branding:
   icon: package
